@@ -1,0 +1,9 @@
+[package]
+name = "go-gtp"
+version = "0.1.0"
+description = "A Rust library for Go Gtp"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/casey-digennaro/go-gtp"
+edition = "2021"
+
+[dependencies]
