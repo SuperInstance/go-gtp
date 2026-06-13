@@ -1,57 +1,132 @@
-# Go Text Protocol (GTP) Engine
+# go-gtp: Go Text Protocol Engine for the Game of Go
 
-**A Rust library implementing the Go Text Protocol** — the standard communication protocol for Go (Baduk/Weiqi) engine interfaces — with command parsing, a 19×19 board model, and stone placement logic.
+A Rust implementation of the **Go Text Protocol (GTP)** — the standard text-based interface between Go engines and graphical frontends. Includes a GTP command parser, a 19×19 board representation with stone placement, and the foundations for building a Go-playing agent.
 
 ## Why It Matters
 
-The Go Text Protocol (GTP) is how Go engines (GNU Go, Leela Zero, KataGo) communicate with graphical frontends and online servers. Every competitive Go program implements GTP to receive commands like `play black D4`, `genmove white`, and `boardsize 19`. This library provides the parsing layer and board representation, handling the text protocol format (optional numeric IDs, command names, arguments) and maintaining board state (stone placement, occupancy checks). Whether you're building a Go engine, a GTP controller, or an analysis tool, this crate handles the protocol plumbing.
+The Go Text Protocol (GTP, version 2) is the universal interface for Go engines, defined by the GNU Go project. Every major Go engine (GnuGo, Leela Zero, KataGo, Pachi) speaks GTP. A correct GTP implementation is the prerequisite for:
+
+- Connecting a custom engine to any Go GUI (GoGui, Sabaki, Lizzie)
+- Participating in Computer Go tournaments (CGOS, KGS)
+- Benchmarking against existing engines
+- Building analysis pipelines (tsumego solvers, joseki databases)
+
+The game of Go itself is famous in AI: with 10¹⁷⁰ legal positions, it has a state space larger than chess by 80 orders of magnitude. AlphaGo's 2016 victory over Lee Sedol was a landmark in deep reinforcement learning.
 
 ## How It Works
 
-**Protocol parsing** implements `FromStr` for `GtpCommand`. A GTP line like `1 play black D4` is parsed by: (1) stripping comments after `#`, (2) splitting on whitespace, (3) checking if the first token is a numeric ID (e.g., `1`), and (4) extracting the command name (`play`) and arguments (`["black", "D4"]`). Both `play black D4` (no ID) and `10 play black D4` (with ID) are valid GTP.
+### GTP Command Parsing
 
-**Board representation** uses a fixed `19×19` array of `Option<Stone>` where `Stone` is `Black` or `White`. The `GoBoard` struct supports `place(Vertex, Stone)` with occupancy checking, `get(Vertex)` queries, and `clear()`. The `Stone` enum has an `opposite()` method for alternating turns. Vertices are `(x, y)` coordinates (column, row) using 0-indexed `u8` values — the GTP vertex `D4` maps to `Vertex(3, 3)`.
+GTP commands follow the format:
+
+```
+[id] command_name [args...]
+```
+
+Where `id` is an optional numeric identifier for request-response correlation. The parser:
+
+1. Strips comments (everything after `#`)
+2. Tokenizes by whitespace
+3. Checks if the first token is numeric (→ id)
+4. Remaining tokens form the command name + args
+
+```
+"1 play black D4"   →  GtpCommand { id: Some(1), name: "play", args: ["black", "D4"] }
+"boardsize 19"      →  GtpCommand { id: None, name: "boardsize", args: ["19"] }
+```
+
+**Complexity**: O(n) where n = command string length.
+
+### Board Representation
+
+A fixed 19×19 grid using a 2D array of `Option<Stone>`:
+
+```
+grid: [[Option<Stone>; 19]; 19]
+
+Stone = Black | White
+```
+
+Stone placement is O(1) — direct array index. The `place` method rejects moves on occupied points.
+
+### Vertex Encoding
+
+Board intersections use GTP vertex notation: column letters (skipping `I`) + row numbers:
+
+```
+A1 (bottom-left)  ...  T19 (top-right)
+```
+
+Column letters: A, B, C, D, ..., H, J, K, ..., T (19 columns, `I` is skipped to avoid confusion with `1`).
+
+### Complexity
+
+| Operation | Time | Space |
+|-----------|------|-------|
+| Parse command | O(n) | O(n) tokens |
+| `place(Vertex, Stone)` | O(1) | O(1) |
+| `get(Vertex)` | O(1) | O(1) |
+| `clear()` | O(N²) | O(1) where N = 19 |
+
+Board state: 19 × 19 × 1 byte = 361 bytes (compact).
 
 ## Quick Start
 
 ```rust
-use go_gtp::*;
+use go_gtp::{GtpCommand, GoBoard, Stone, Vertex};
 use std::str::FromStr;
 
-fn main() {
-    // Parse GTP commands
-    let cmd: GtpCommand = "1 play black D4".parse().unwrap();
-    println!("ID: {:?}, Command: {}, Args: {:?}", cmd.id, cmd.name, cmd.args);
+// Parse GTP commands
+let cmd = GtpCommand::from_str("1 play black D4").unwrap();
+assert_eq!(cmd.id, Some(1));
+assert_eq!(cmd.name, "play");
+assert_eq!(cmd.args, vec!["black", "D4"]);
 
-    let cmd2: GtpCommand = "genmove white".parse().unwrap();
-    println!("Command: {}", cmd2.name);
-
-    // Board operations
-    let mut board = GoBoard::new();
-    board.place(Vertex(3, 3), Stone::Black).unwrap(); // D4
-    board.place(Vertex(15, 15), Stone::White).unwrap(); // Q16
-
-    println!("D4: {:?}", board.get(Vertex(3, 3)));  // Some(Black)
-    println!("Q16: {:?}", board.get(Vertex(15, 15))); // Some(White)
-    println!("K10: {:?}", board.get(Vertex(9, 9)));   // None
-}
+// Manage the board
+let mut board = GoBoard::new();
+board.place(Vertex(3, 3), Stone::Black).unwrap(); // D4
+assert_eq!(board.get(Vertex(3, 3)), Some(Stone::Black));
+assert_eq!(board.get(Vertex(0, 0)), None);
 ```
 
 ## API
 
-| Type / Function | Description |
-|---|---|
-| `GtpCommand` (impl `FromStr`) | Parsed GTP command with optional ID, name, and args |
-| `Stone::Black` / `Stone::White` | Stone colors with `opposite()` |
-| `Vertex(x, y)` | Board coordinate (0-indexed column, row) |
-| `GoBoard::new()` | Create an empty 19×19 board |
-| `GoBoard::place(v, stone)` | Place a stone (errors if occupied) |
-| `GoBoard::get(v)` | Query the stone at a vertex |
-| `GoBoard::clear()` | Remove all stones |
+### `GtpCommand`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `Option<u32>` | Optional numeric request ID |
+| `name` | `String` | Command name (lowercased) |
+| `args` | `Vec<String>` | Command arguments |
+
+Implements `FromStr` for parsing from `&str`.
+
+### `GoBoard`
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `new()` | `() -> Self` | Empty 19×19 board |
+| `place(Vertex, Stone)` | `() -> Result<(), &str>` | Place stone (errors if occupied) |
+| `get(Vertex)` | `(Vertex) -> Option<Stone>` | Read stone at position |
+| `clear()` | `(&mut self)` | Remove all stones |
+
+### `Stone`
+
+`Black | White`, with `opposite()` for alternating turns.
+
+### `Vertex(pub u8, pub u8)`
+
+Zero-indexed (column, row) pair. Column 0 = A, column 18 = T.
 
 ## Architecture Notes
 
-Part of the SuperInstance game engine collection. The GTP parser interfaces with the board model for move execution and game state tracking. See the [Architecture Guide](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md).
+This is a **γ (gamma)** module — the board state and protocol parsing are deterministic and side-effect-free. In the γ + η = C framework, this provides the game-state substrate; an **η** layer would add move generation, UCT/MCTS search, pattern matching, and engine logic. The GTP protocol is the interface contract between γ (game state) and η (strategy).
+
+## References
+
+- Bump, G. (2002). *Go Text Protocol Specification, Version 2, draft 2*. GNU Go documentation.
+- Silver, D. et al. (2016). *Mastering the Game of Go with Deep Neural Networks and Tree Search*. Nature 529, 484–489.
+- Müller, M. (2002). *Computer Go*. Artificial Intelligence 134(1–2), 145–179.
 
 ## License
 
