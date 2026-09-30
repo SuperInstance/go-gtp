@@ -1,9 +1,11 @@
 [package]
 name = "go-gtp"
 version = "0.1.0"
-description = "A Rust library for Go Gtp"
+description = "Go Gtp — Rust implementation with the SuperInstance polyformalism canary wired in."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/casey-digennaro/go-gtp"
+repository = "https://github.com/SuperInstance/go-gtp"
 edition = "2021"
+
+keywords = ["go-gtp"]
 
 [dependencies]
